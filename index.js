@@ -22,7 +22,7 @@ const client = new Client({
 
 const prefix = '?';
 
-// CONFIG
+// ROLE CONFIG
 const roleCommands = {
   banish: '1431994048314347626',
   partner: '1431994048314347629'
@@ -30,7 +30,7 @@ const roleCommands = {
 
 const logChannelId = '1431994052169171128';
 
-// Storage file
+// Storage
 const storageFile = './roleData.json';
 
 if (!fs.existsSync(storageFile)) {
@@ -62,7 +62,7 @@ client.on('messageCreate', async message => {
 
   if (!['banish', 'restore', 'partner', 'appeal'].includes(command)) return;
 
-  // APPEAL SYSTEM (no admin required)
+  // APPEAL (public)
   if (command === 'appeal') {
 
     const reason = args.join(" ");
@@ -78,7 +78,7 @@ client.on('messageCreate', async message => {
     return message.reply("Your appeal has been submitted to staff.");
   }
 
-  // Admin-only commands
+  // Admin only commands
   if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
     return message.reply("Only administrators can use this.");
   }
