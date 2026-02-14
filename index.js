@@ -73,7 +73,7 @@ client.on('messageCreate', async message => {
     if (command === 'banish') {
 
       const member = message.mentions.members.first();
-      if (!member) return message.reply("Mention a user.");
+      if (!member) return message.reply("Whom shall I banish, my King?");
 
       const savedRoles = member.roles.cache
         .filter(r => r.id !== message.guild.id)
@@ -106,7 +106,7 @@ client.on('messageCreate', async message => {
     if (command === 'restore') {
 
       const member = message.mentions.members.first();
-      if (!member) return message.reply("Mention a user.");
+      if (!member) return message.reply("Whom shall I restore, my King?");
 
       if (!data[member.id]) {
         return message.reply("No saved roles for this user.");
@@ -139,7 +139,7 @@ client.on('messageCreate', async message => {
     if (command === 'partner') {
 
       const member = message.mentions.members.first();
-      if (!member) return message.reply("Mention a user.");
+      if (!member) return message.reply("Whom shall I partner, my King?");
 
       await member.roles.add(roleCommands.partner);
 
@@ -165,7 +165,7 @@ client.on('messageCreate', async message => {
 
       const appealReason = args.join(' ');
       if (!appealReason) {
-        return message.reply("Provide a reason for your appeal.");
+        return message.reply("Provide the reason for your appeal, peasant.");
       }
 
       const embed = new EmbedBuilder()
