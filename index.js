@@ -20,7 +20,7 @@ const client = new Client({
 
 const prefix = '?';
 
-// ===== CONFIG =====
+// ================= CONFIG =================
 const roleCommands = {
   banish: '1431994048314347626',
   partner: '1431994048314347629'
@@ -28,59 +28,125 @@ const roleCommands = {
 
 const logChannelId = '1431994052169171128';
 
-// ===== STORAGE =====
-const storageFile = './roleData.json';
+// ================= STORAGE FILES =================
+const roleDataFile = './roleData.json';
+const banishedFile = './banished.json';
 
-if (!fs.existsSync(storageFile)) {
-  fs.writeFileSync(storageFile, JSON.stringify({}));
+if (!fs.existsSync(roleDataFile))
+  fs.writeFileSync(roleDataFile, JSON.stringify({}));
+
+if (!fs.existsSync(banishedFile))
+  fs.writeFileSync(banishedFile, JSON.stringify([]));
+
+function loadRoles() {
+  return JSON.parse(fs.readFileSync(roleDataFile));
 }
 
-function loadData() {
-  return JSON.parse(fs.readFileSync(storageFile));
+function saveRoles(data) {
+  fs.writeFileSync(roleDataFile, JSON.stringify(data, null, 2));
 }
 
-function saveData(data) {
-  fs.writeFileSync(storageFile, JSON.stringify(data, null, 2));
+function loadBanished() {
+  return JSON.parse(fs.readFileSync(banishedFile));
+}
+
+function saveBanished(data) {
+  fs.writeFileSync(banishedFile, JSON.stringify(data, null, 2));
 }
 
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
+// ================= AUTOMOD =================
+const spamTracker = new Map();
+
 client.on('messageCreate', async message => {
+  if (!message.guild) return;
   if (message.author.bot) return;
+
+  const logChannel = message.guild.channels.cache.get(logChannelId);
+
+  // ===== Anti Invite =====
+  if (message.content.match(/discord\.gg|discord\.com\/invite/gi)) {
+    await message.delete().catch(() => {});
+    message.channel.send(`${message.author}, invite links are not allowed.`);
+    return;
+  }
+
+  // ===== Anti Spam (5 messages in 5 seconds) =====
+  const now = Date.now();
+  const timestamps = spamTracker.get(message.author.id) || [];
+  timestamps.push(now);
+  spamTracker.set(
+    message.author.id,
+    timestamps.filter(t => now - t < 5000)
+  );
+
+  if (spamTracker.get(message.author.id).length > 5) {
+    await message.delete().catch(() => {});
+    message.channel.send(`${message.author}, stop spamming.`);
+    return;
+  }
+
   if (!message.content.startsWith(prefix)) return;
 
   const args = message.content.slice(prefix.length).trim().split(/ +/);
   const command = args.shift().toLowerCase();
 
-  const logChannel = message.guild.channels.cache.get(logChannelId);
-  const data = loadData();
-
-  // ===== PERMISSION CHECK =====
-  if (
-    ['banish', 'restore', 'partner'].includes(command) &&
-    !message.member.permissions.has(PermissionsBitField.Flags.Administrator)
-  ) {
-    return message.reply("❌ Only administrators can use this.");
-  }
+  const roleData = loadRoles();
+  const banishedUsers = loadBanished();
 
   try {
 
-    // =========================
-    // 🔴 BANISH
-    // =========================
+    // ================= APPEAL =================
+    if (command === 'appeal') {
+
+      const reason = args.join(' ');
+      if (!reason)
+        return message.reply("Provide the reason for your appeal.");
+
+      const embed = new EmbedBuilder()
+        .setColor('Yellow')
+        .setTitle('New Appeal Submitted')
+        .addFields(
+          { name: 'User', value: message.author.tag },
+          { name: 'Reason', value: reason }
+        )
+        .setTimestamp();
+
+      await message.reply("Your appeal has been submitted.");
+      if (logChannel) logChannel.send({ embeds: [embed] });
+
+      return;
+    }
+
+    // ================= ADMIN CHECK =================
+    if (
+      ['banish', 'restore', 'partner'].includes(command) &&
+      !message.member.permissions.has(PermissionsBitField.Flags.Administrator)
+    ) {
+      return message.reply("❌ Only administrators can use this.");
+    }
+
+    // ================= BANISH =================
     if (command === 'banish') {
 
       const member = message.mentions.members.first();
-      if (!member) return message.reply("Whom shall I banish, my King?");
+      if (!member)
+        return message.reply("Whom shall I banish, my King?");
 
       const savedRoles = member.roles.cache
         .filter(r => r.id !== message.guild.id)
         .map(r => r.id);
 
-      data[member.id] = savedRoles;
-      saveData(data);
+      roleData[member.id] = savedRoles;
+      saveRoles(roleData);
+
+      if (!banishedUsers.includes(member.id)) {
+        banishedUsers.push(member.id);
+        saveBanished(banishedUsers);
+      }
 
       await member.roles.set([]);
       await member.roles.add(roleCommands.banish);
@@ -100,23 +166,24 @@ client.on('messageCreate', async message => {
       return;
     }
 
-    // =========================
-    // 🟢 RESTORE
-    // =========================
+    // ================= RESTORE =================
     if (command === 'restore') {
 
       const member = message.mentions.members.first();
-      if (!member) return message.reply("Whom shall I restore, my King?");
+      if (!member)
+        return message.reply("Whom shall I restore, my King?");
 
-      if (!data[member.id]) {
+      if (!roleData[member.id])
         return message.reply("No saved roles for this user.");
-      }
 
       await member.roles.set([]);
-      await member.roles.add(data[member.id]);
+      await member.roles.add(roleData[member.id]);
 
-      delete data[member.id];
-      saveData(data);
+      delete roleData[member.id];
+      saveRoles(roleData);
+
+      const updatedBanished = banishedUsers.filter(id => id !== member.id);
+      saveBanished(updatedBanished);
 
       const embed = new EmbedBuilder()
         .setColor('Green')
@@ -133,13 +200,12 @@ client.on('messageCreate', async message => {
       return;
     }
 
-    // =========================
-    // 🔵 PARTNER
-    // =========================
+    // ================= PARTNER =================
     if (command === 'partner') {
 
       const member = message.mentions.members.first();
-      if (!member) return message.reply("Whom shall I partner, my King?");
+      if (!member)
+        return message.reply("Whom shall I partner, my King?");
 
       await member.roles.add(roleCommands.partner);
 
@@ -158,34 +224,23 @@ client.on('messageCreate', async message => {
       return;
     }
 
-    // =========================
-    // 🟡 APPEAL
-    // =========================
-    if (command === 'appeal') {
-
-      const appealReason = args.join(' ');
-      if (!appealReason) {
-        return message.reply("Provide the reason for your appeal, peasant.");
-      }
-
-      const embed = new EmbedBuilder()
-        .setColor('Yellow')
-        .setTitle('New Appeal Submitted')
-        .addFields(
-          { name: 'User', value: message.author.tag },
-          { name: 'Reason', value: appealReason }
-        )
-        .setTimestamp();
-
-      await message.reply("Your appeal has been submitted.");
-      if (logChannel) logChannel.send({ embeds: [embed] });
-
-      return;
-    }
-
   } catch (err) {
     console.error(err);
     message.reply("⚠️ Action failed. Check role hierarchy.");
+  }
+});
+
+// ================= REJOIN AUTO BANISH =================
+client.on('guildMemberAdd', async member => {
+  const banishedUsers = loadBanished();
+
+  if (banishedUsers.includes(member.id)) {
+    try {
+      await member.roles.add(roleCommands.banish);
+      console.log(`Re-applied banish role to ${member.user.tag}`);
+    } catch (err) {
+      console.error("Failed to reapply banish role:", err);
+    }
   }
 });
 
