@@ -41,13 +41,16 @@ const client = new Client({
 });
 
 const prefix = '?';
+// =====================================================
+// GOD MODE STATE (in-memory, per guild)
+// =====================================================
+// guildId -> { shield: boolean, locked: boolean }
+const godModeState = new Map();
 
 // =====================================================
 // CONFIG (GLOBAL DEFAULTS)
 // =====================================================
 
-const godModeState = new Map(); 
-// guildId -> { shield: boolean, locked: boolean }
 // Optional role-based staff perms (leave null to disable)
 const STAFF_ROLE_ID = null;          // e.g. '123456789012345678'
 // Optional quarantine role (leave null to disable)
@@ -64,6 +67,7 @@ const TIMEOUT_ON_WARN_MS = 60 * 60 * 1000; // 1 hour
 const WARNINGS_BEFORE_BANISH = 6;
 
 // AutoMod toggles (free/local)
+const AUTOMOD_ENABLED = true;
 const BLOCK_INVITES = true;
 const BLOCK_LINKS = false; // set true if you want to block http/https
 const LINK_WHITELIST = ['youtube.com', 'youtu.be', 'tenor.com', 'giphy.com', 'discord.com/channels'];
@@ -734,24 +738,19 @@ client.on('inviteCreate', async invite => { await refreshInviteSnapshot(invite.g
 client.on('inviteDelete', async invite => { await refreshInviteSnapshot(invite.guild).catch(() => {}); });
 
 
-// 👑 GOD MODE SHIELD — Channel Delete Protection
+// 👑 GOD MODE SHIELD — Channel Delete Protection (best-effort)
 client.on('channelDelete', async channel => {
-  const state = godModeState.get(channel.guild.id);
+  const guild = channel.guild;
+  if (!guild) return;
+  const state = godModeState.get(guild.id);
   if (!state?.shield) return;
 
-  const audit = await channel.guild.fetchAuditLogs({
-    limit: 1,
-    type: 12 // CHANNEL_DELETE
-  }).catch(() => null);
-
+  const audit = await guild.fetchAuditLogs({ limit: 1, type: 12 }).catch(() => null); // 12 = CHANNEL_DELETE
   const entry = audit?.entries?.first();
-  if (!entry) return;
-
-  const executor = entry.executor;
+  const executor = entry?.executor;
   if (!executor || executor.id === KING_ID) return;
 
-  // Recreate the deleted channel
-  await channel.guild.channels.create({
+  await guild.channels.create({
     name: channel.name,
     type: channel.type,
     parent: channel.parentId || null
@@ -935,11 +934,6 @@ client.on('messageCreate', async message => {
   const guild = message.guild;
   const gc = ensureGuildConfig(guild.id);
 
-if (cmd === 'godmode') {
-  if (message.author.id !== KING_ID) return;
-
-  // godmode logic here
-}
   // AFK responder
   if (message.mentions.users.size > 0) {
     for (const user of message.mentions.users.values()) {
@@ -994,7 +988,7 @@ if (cmd === 'godmode') {
   }
 
   // AutoMod
-if (gc.automodEnabled && !isStaff(message.member) && message.author.id !== KING_ID) {
+  if (gc.automodEnabled && !isStaff(message.member)) {
     // Flood
     {
       const now = nowTs();
@@ -1230,10 +1224,10 @@ if (gc.automodEnabled && !isStaff(message.member) && message.author.id !== KING_
     const categories = [
       { name: 'Core', cmds: ['`?banish @user [10m|2h|7d] [reason]`','`?restore @user`','`?partner @user`','`?appeal reason...`','`?history @user`'] },
       { name: 'AFK', cmds: ['`?afk [reason]`','`?back`'] },
-      { name: 'Moderation', cmds: ['`?warn @user reason...`','`?warnings @user`','`?clearwarnings @user`','`?timeout @user 10m reason...`','`?untimeout @user`','`?kick @user reason...`','`?ban @user reason...`','`?purge 10`','`?lock` / `?unlock`','`?lockdown` / `?unlockdown`','`?slowmode 5`','`?raidmode on/off`','`?aizen on/off`'] },
+      { name: 'Moderation', cmds: ['`?warn @user reason...`','`?warnings @user`','`?clearwarnings @user`','`?timeout @user 10m reason...`','`?untimeout @user`','`?kick @user reason...`','`?ban @user reason...`','`?purge 10`','`?lock` / `?unlock`','`?lockdown` / `?unlockdown`','`?slowmode 5`','`?raidmode on/off`','`?automod on/off`','`?setup`','`?status`'] },
       { name: 'Community', cmds: ['`?rank [@user]`','`?leaderboard`','`?invites [@user]`','`?ping`'] },
       { name: 'Court', cmds: ['`?court @user reason...`','`?closecase <caseId> [note]`','`?case <caseId>`'] },
-      { name: 'Bot / Owner', cmds: ['`?aizen on/off`','`?leveling on/off`','`?invitetracker on/off`','`?addcmd <name> <response>`','`?addcmd_owner <name> <response>`','`?addcmd_staff <name> <response>`','`?delcmd <name>`','`?cmds`'] }
+      { name: 'Bot / Owner', cmds: ['`?aizen on/off`','`?leveling on/off`','`?invitetracker on/off`','`?automod on/off`','`?godmode`','`?setup`','`?status`','`?addcmd <name> <response>`','`?addcmd_owner <name> <response>`','`?addcmd_staff <name> <response>`','`?delcmd <name>`','`?cmds`'] }
     ];
 
     const e = new EmbedBuilder()
@@ -1247,6 +1241,32 @@ if (gc.automodEnabled && !isStaff(message.member) && message.author.id !== KING_
   }
 
   if (cmd === 'ping') return message.reply(`🏓 Pong! ${client.ws.ping}ms`).catch(() => {});
+
+
+  if (cmd === 'status') {
+    const gcfg = ensureGuildConfig(guild.id);
+    const e = new EmbedBuilder()
+      .setColor('Blue')
+      .setTitle('📊 Server Status')
+      .setDescription(`AutoMod: **${gcfg.automodEnabled ? 'ON' : 'OFF'}**
+Raid Mode: **${gcfg.raidMode ? 'ON' : 'OFF'}**
+Aizen: **${gcfg.chatbotEnabled ? 'ON' : 'OFF'}**
+Leveling: **${gcfg.levelingEnabled ? 'ON' : 'OFF'}**
+Invite Tracker: **${gcfg.inviteTrackingEnabled ? 'ON' : 'OFF'}**`)
+      .addFields(
+        { name: 'Banished Role', value: gcfg.banishRoleId ? `<@&${gcfg.banishRoleId}>` : 'Missing', inline: true },
+        { name: 'Appeal Channel', value: gcfg.appealChannelId ? `<#${gcfg.appealChannelId}>` : 'Missing', inline: true },
+        { name: 'Logs', value: gcfg.logChannelId ? `<#${gcfg.logChannelId}>` : 'Missing', inline: true }
+      )
+      .setTimestamp();
+    return message.reply({ embeds: [e] }).catch(() => {});
+  }
+
+  if (cmd === 'setup') {
+    if (!isStaff(message.member)) return;
+    await setupGuild(guild).catch(() => {});
+    return message.reply('✅ Setup re-run complete (Banished role / appeal channel / logs).').catch(() => {});
+  }
 
   // AFK commands
   if (cmd === 'afk') {
@@ -1297,114 +1317,20 @@ if (gc.automodEnabled && !isStaff(message.member) && message.author.id !== KING_
     return message.reply(sub === 'on' ? '🧷 Invite tracking enabled.' : '🧷 Invite tracking disabled.').catch(() => {});
   }
 
+
   if (cmd === 'automod') {
     if (!isStaff(message.member)) return;
     const sub = (args[0] || '').toLowerCase();
-    if (!['on','off'].includes(sub))
-    return message.reply('Use `?automod on` or `?automod off`').catch(() => {});
+    if (!['on', 'off', 'status'].includes(sub)) {
+      return message.reply('Use `?automod on`, `?automod off`, or `?automod status`').catch(() => {});
+    }
+    if (sub === 'status') {
+      const gcfg = ensureGuildConfig(guild.id);
+      return message.reply(`🛡️ AutoMod is **${gcfg.automodEnabled ? 'ON' : 'OFF'}** in this server.`).catch(() => {});
+    }
     setGuildConfig(guild.id, { automodEnabled: sub === 'on' });
-    return message.reply(
-    sub === 'on'
-      ? '🛡️ AutoMod enabled.'
-      : '🛡️ AutoMod disabled.'
-    ).catch(() => {});
+    return message.reply(sub === 'on' ? '🛡️ AutoMod enabled.' : '🛡️ AutoMod disabled.').catch(() => {});
   }
-
-  if (cmd === 'godmode') {
-  if (message.author.id !== KING_ID) return;
-
-  if (!godModeState.has(guild.id)) {
-    godModeState.set(guild.id, { shield: false, locked: false });
-  }
-
-  const state = godModeState.get(guild.id);
-  const sub = (args[0] || '').toLowerCase();
-
-  // 👑 Status Panel
- if (!sub) {
-  const panel = new EmbedBuilder()
-    .setColor('Gold')
-    .setTitle('👑 GOD MODE CONTROL PANEL')
-    .setDescription('Supreme Owner Control Interface')
-    .addFields(
-      {
-        name: '🛡 Shield Protection',
-        value: state.shield ? '🟢 Enabled (Channel deletion protected)' : '🔴 Disabled',
-        inline: false
-      },
-      {
-        name: '🔒 Server Lock',
-        value: state.locked ? '🟢 Locked (All channels locked)' : '🔓 Open',
-        inline: false
-      },
-      {
-        name: '⚙ System Status',
-        value:
-`AutoMod: ${gc.automodEnabled ? '🟢 ON' : '🔴 OFF'}
-Raid Mode: ${gc.raidMode ? '🟢 ON' : '🔴 OFF'}
-Leveling: ${gc.levelingEnabled ? '🟢 ON' : '🔴 OFF'}
-Invite Tracker: ${gc.inviteTrackingEnabled ? '🟢 ON' : '🔴 OFF'}`,
-        inline: false
-      },
-      {
-        name: '👑 Commands',
-        value:
-'`?godmode lock`\n' +
-'`?godmode unlock`\n' +
-'`?godmode shield on`\n' +
-'`?godmode shield off`\n' +
-'`?godmode freeze @user`\n' +
-'`?godmode unfreeze @user`',
-        inline: false
-      }
-    )
-    .setFooter({ text: 'Absolute Authority Granted' })
-    .setTimestamp();
-
-  return message.reply({ embeds: [panel] });
-}
-
-
-  // 👑 Server Lock
-  if (sub === 'lock') {
-    await lockAllTextChannels(guild, true);
-    state.locked = true;
-    return message.reply('👑 Server locked.');
-  }
-
-  if (sub === 'unlock') {
-    await lockAllTextChannels(guild, false);
-    state.locked = false;
-    return message.reply('👑 Server unlocked.');
-  }
-
-  // 👑 Shield Mode (anti abuse)
-  if (sub === 'shield') {
-    const toggle = (args[1] || '').toLowerCase();
-    if (!['on','off'].includes(toggle))
-      return message.reply('Use `?godmode shield on/off`');
-
-    state.shield = toggle === 'on';
-    return message.reply(`👑 Shield ${toggle === 'on' ? 'enabled' : 'disabled'}.`);
-  }
-
-  // 👑 Freeze User
-  if (sub === 'freeze') {
-    const member = message.mentions.members.first();
-    if (!member) return message.reply('Mention a user.');
-
-    await member.timeout(28 * 24 * 60 * 60 * 1000, 'Frozen by King').catch(() => {});
-    return message.reply(`👑 ${member.user.tag} frozen.`);
-  }
-
-  if (sub === 'unfreeze') {
-    const member = message.mentions.members.first();
-    if (!member) return message.reply('Mention a user.');
-
-    await member.timeout(null).catch(() => {});
-    return message.reply(`👑 ${member.user.tag} unfrozen.`);
-  }
-}
 
 
   // Community rank/leaderboard/invites
@@ -1454,7 +1380,93 @@ Invite Tracker: ${gc.inviteTrackingEnabled ? '🟢 ON' : '🔴 OFF'}`,
     return message.reply({ embeds: [e] }).catch(() => {});
   }
 
-  // Staff-only below
+  
+  // 👑 GOD MODE (KING ONLY)
+  if (cmd === 'godmode') {
+    if (message.author.id !== KING_ID) return;
+
+    if (!godModeState.has(guild.id)) {
+      godModeState.set(guild.id, { shield: false, locked: false });
+    }
+    const state = godModeState.get(guild.id);
+    const sub = (args[0] || '').toLowerCase();
+
+    // Panel
+    if (!sub) {
+      const panel = new EmbedBuilder()
+        .setColor('Gold')
+        .setTitle('👑 GOD MODE CONTROL PANEL')
+        .setDescription('Supreme Owner Control Interface')
+        .addFields(
+          { name: '🛡 Shield Protection', value: state.shield ? '🟢 Enabled (channel deletion protected)' : '🔴 Disabled', inline: false },
+          { name: '🔒 Server Lock', value: state.locked ? '🟢 Locked (channels locked)' : '🔓 Open', inline: false },
+          {
+            name: '⚙ System Status',
+            value:
+`AutoMod: ${gc.automodEnabled ? '🟢 ON' : '🔴 OFF'}
+Raid Mode: ${gc.raidMode ? '🟢 ON' : '🔴 OFF'}
+Leveling: ${gc.levelingEnabled ? '🟢 ON' : '🔴 OFF'}
+Invite Tracker: ${gc.inviteTrackingEnabled ? '🟢 ON' : '🔴 OFF'}`,
+            inline: false
+          },
+          {
+            name: '👑 Commands',
+            value:
+'`?godmode lock`\\n' +
+'`?godmode unlock`\\n' +
+'`?godmode shield on`\\n' +
+'`?godmode shield off`\\n' +
+'`?godmode freeze @user`\\n' +
+'`?godmode unfreeze @user`\\n' +
+'`?setup` (re-run setup)\\n' +
+'`?status` (quick status)',
+            inline: false
+          }
+        )
+        .setFooter({ text: 'Absolute Authority Granted' })
+        .setTimestamp();
+
+      return message.reply({ embeds: [panel] }).catch(() => {});
+    }
+
+    if (sub === 'lock') {
+      await lockAllTextChannels(guild, true);
+      state.locked = true;
+      return message.reply('👑 Server locked.').catch(() => {});
+    }
+
+    if (sub === 'unlock') {
+      await lockAllTextChannels(guild, false);
+      state.locked = false;
+      return message.reply('👑 Server unlocked.').catch(() => {});
+    }
+
+    if (sub === 'shield') {
+      const toggle = (args[1] || '').toLowerCase();
+      if (!['on', 'off'].includes(toggle)) return message.reply('Use `?godmode shield on/off`').catch(() => {});
+      state.shield = toggle === 'on';
+      return message.reply(`👑 Shield ${state.shield ? 'enabled' : 'disabled'}.`).catch(() => {});
+    }
+
+    if (sub === 'freeze') {
+      const member = message.mentions.members.first();
+      if (!member) return message.reply('Mention a user.').catch(() => {});
+      if (member.id === KING_ID) return message.reply('👑 You cannot freeze the King.').catch(() => {});
+      await member.timeout(28 * 24 * 60 * 60 * 1000, 'Frozen by King').catch(() => {});
+      return message.reply(`👑 ${member.user.tag} frozen.`).catch(() => {});
+    }
+
+    if (sub === 'unfreeze') {
+      const member = message.mentions.members.first();
+      if (!member) return message.reply('Mention a user.').catch(() => {});
+      await member.timeout(null).catch(() => {});
+      return message.reply(`👑 ${member.user.tag} unfrozen.`).catch(() => {});
+    }
+
+    return message.reply('Unknown godmode subcommand. Use `?godmode` for panel.').catch(() => {});
+  }
+
+// Staff-only below
   if (!isStaff(message.member)) return;
 
   // Raid mode
