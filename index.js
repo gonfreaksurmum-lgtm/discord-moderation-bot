@@ -62,7 +62,6 @@ const TIMEOUT_ON_WARN_MS = 60 * 60 * 1000; // 1 hour
 const WARNINGS_BEFORE_BANISH = 6;
 
 // AutoMod toggles (free/local)
-const AUTOMOD_ENABLED = true;
 const BLOCK_INVITES = true;
 const BLOCK_LINKS = false; // set true if you want to block http/https
 const LINK_WHITELIST = ['youtube.com', 'youtu.be', 'tenor.com', 'giphy.com', 'discord.com/channels'];
@@ -162,6 +161,7 @@ function ensureGuildConfig(guildId) {
       raidMode: false,
       raidModeUntil: 0,
       chatbotEnabled: false,
+      automodEnabled: true,
       levelingEnabled: LEVELING_ENABLED_DEFAULT,
       inviteTrackingEnabled: INVITE_TRACKING_ENABLED_DEFAULT,
       banishRoleId: null,
@@ -962,7 +962,7 @@ client.on('messageCreate', async message => {
   }
 
   // AutoMod
-  if (AUTOMOD_ENABLED && !isStaff(message.member)) {
+if (gc.automodEnabled && !isStaff(message.member) && message.author.id !== KING_ID) {
     // Flood
     {
       const now = nowTs();
@@ -1198,7 +1198,7 @@ client.on('messageCreate', async message => {
     const categories = [
       { name: 'Core', cmds: ['`?banish @user [10m|2h|7d] [reason]`','`?restore @user`','`?partner @user`','`?appeal reason...`','`?history @user`'] },
       { name: 'AFK', cmds: ['`?afk [reason]`','`?back`'] },
-      { name: 'Moderation', cmds: ['`?warn @user reason...`','`?warnings @user`','`?clearwarnings @user`','`?timeout @user 10m reason...`','`?untimeout @user`','`?kick @user reason...`','`?ban @user reason...`','`?purge 10`','`?lock` / `?unlock`','`?lockdown` / `?unlockdown`','`?slowmode 5`','`?raidmode on/off`'] },
+      { name: 'Moderation', cmds: ['`?warn @user reason...`','`?warnings @user`','`?clearwarnings @user`','`?timeout @user 10m reason...`','`?untimeout @user`','`?kick @user reason...`','`?ban @user reason...`','`?purge 10`','`?lock` / `?unlock`','`?lockdown` / `?unlockdown`','`?slowmode 5`','`?raidmode on/off`','`?aizen on/off`'] },
       { name: 'Community', cmds: ['`?rank [@user]`','`?leaderboard`','`?invites [@user]`','`?ping`'] },
       { name: 'Court', cmds: ['`?court @user reason...`','`?closecase <caseId> [note]`','`?case <caseId>`'] },
       { name: 'Bot / Owner', cmds: ['`?aizen on/off`','`?leveling on/off`','`?invitetracker on/off`','`?addcmd <name> <response>`','`?addcmd_owner <name> <response>`','`?addcmd_staff <name> <response>`','`?delcmd <name>`','`?cmds`'] }
@@ -1263,6 +1263,19 @@ client.on('messageCreate', async message => {
     setGuildConfig(guild.id, { inviteTrackingEnabled: sub === 'on' });
     if (sub === 'on') await refreshInviteSnapshot(guild).catch(() => {});
     return message.reply(sub === 'on' ? '🧷 Invite tracking enabled.' : '🧷 Invite tracking disabled.').catch(() => {});
+  }
+
+  if (cmd === 'automod') {
+    if (!isStaff(message.member)) return;
+    const sub = (args[0] || '').toLowerCase();
+    if (!['on','off'].includes(sub))
+    return message.reply('Use `?automod on` or `?automod off`').catch(() => {});
+    setGuildConfig(guild.id, { automodEnabled: sub === 'on' });
+    return message.reply(
+    sub === 'on'
+      ? '🛡️ AutoMod enabled.'
+      : '🛡️ AutoMod disabled.'
+    ).catch(() => {});
   }
 
   // Community rank/leaderboard/invites
