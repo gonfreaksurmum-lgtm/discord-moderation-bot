@@ -46,6 +46,8 @@ const prefix = '?';
 // CONFIG (GLOBAL DEFAULTS)
 // =====================================================
 
+const godModeState = new Map(); 
+// guildId -> { shield: boolean, locked: boolean }
 // Optional role-based staff perms (leave null to disable)
 const STAFF_ROLE_ID = null;          // e.g. '123456789012345678'
 // Optional quarantine role (leave null to disable)
@@ -731,6 +733,31 @@ client.on('guildCreate', async (guild) => {
 client.on('inviteCreate', async invite => { await refreshInviteSnapshot(invite.guild).catch(() => {}); });
 client.on('inviteDelete', async invite => { await refreshInviteSnapshot(invite.guild).catch(() => {}); });
 
+
+// 👑 GOD MODE SHIELD — Channel Delete Protection
+client.on('channelDelete', async channel => {
+  const state = godModeState.get(channel.guild.id);
+  if (!state?.shield) return;
+
+  const audit = await channel.guild.fetchAuditLogs({
+    limit: 1,
+    type: 12 // CHANNEL_DELETE
+  }).catch(() => null);
+
+  const entry = audit?.entries?.first();
+  if (!entry) return;
+
+  const executor = entry.executor;
+  if (!executor || executor.id === KING_ID) return;
+
+  // Recreate the deleted channel
+  await channel.guild.channels.create({
+    name: channel.name,
+    type: channel.type,
+    parent: channel.parentId || null
+  }).catch(() => {});
+});
+
 // =====================================================
 // JOIN HANDLER
 // =====================================================
@@ -908,6 +935,11 @@ client.on('messageCreate', async message => {
   const guild = message.guild;
   const gc = ensureGuildConfig(guild.id);
 
+if (cmd === 'godmode') {
+  if (message.author.id !== KING_ID) return;
+
+  // godmode logic here
+}
   // AFK responder
   if (message.mentions.users.size > 0) {
     for (const user of message.mentions.users.values()) {
@@ -1277,6 +1309,103 @@ if (gc.automodEnabled && !isStaff(message.member) && message.author.id !== KING_
       : '🛡️ AutoMod disabled.'
     ).catch(() => {});
   }
+
+  if (cmd === 'godmode') {
+  if (message.author.id !== KING_ID) return;
+
+  if (!godModeState.has(guild.id)) {
+    godModeState.set(guild.id, { shield: false, locked: false });
+  }
+
+  const state = godModeState.get(guild.id);
+  const sub = (args[0] || '').toLowerCase();
+
+  // 👑 Status Panel
+ if (!sub) {
+  const panel = new EmbedBuilder()
+    .setColor('Gold')
+    .setTitle('👑 GOD MODE CONTROL PANEL')
+    .setDescription('Supreme Owner Control Interface')
+    .addFields(
+      {
+        name: '🛡 Shield Protection',
+        value: state.shield ? '🟢 Enabled (Channel deletion protected)' : '🔴 Disabled',
+        inline: false
+      },
+      {
+        name: '🔒 Server Lock',
+        value: state.locked ? '🟢 Locked (All channels locked)' : '🔓 Open',
+        inline: false
+      },
+      {
+        name: '⚙ System Status',
+        value:
+`AutoMod: ${gc.automodEnabled ? '🟢 ON' : '🔴 OFF'}
+Raid Mode: ${gc.raidMode ? '🟢 ON' : '🔴 OFF'}
+Leveling: ${gc.levelingEnabled ? '🟢 ON' : '🔴 OFF'}
+Invite Tracker: ${gc.inviteTrackingEnabled ? '🟢 ON' : '🔴 OFF'}`,
+        inline: false
+      },
+      {
+        name: '👑 Commands',
+        value:
+'`?godmode lock`\n' +
+'`?godmode unlock`\n' +
+'`?godmode shield on`\n' +
+'`?godmode shield off`\n' +
+'`?godmode freeze @user`\n' +
+'`?godmode unfreeze @user`',
+        inline: false
+      }
+    )
+    .setFooter({ text: 'Absolute Authority Granted' })
+    .setTimestamp();
+
+  return message.reply({ embeds: [panel] });
+}
+
+
+  // 👑 Server Lock
+  if (sub === 'lock') {
+    await lockAllTextChannels(guild, true);
+    state.locked = true;
+    return message.reply('👑 Server locked.');
+  }
+
+  if (sub === 'unlock') {
+    await lockAllTextChannels(guild, false);
+    state.locked = false;
+    return message.reply('👑 Server unlocked.');
+  }
+
+  // 👑 Shield Mode (anti abuse)
+  if (sub === 'shield') {
+    const toggle = (args[1] || '').toLowerCase();
+    if (!['on','off'].includes(toggle))
+      return message.reply('Use `?godmode shield on/off`');
+
+    state.shield = toggle === 'on';
+    return message.reply(`👑 Shield ${toggle === 'on' ? 'enabled' : 'disabled'}.`);
+  }
+
+  // 👑 Freeze User
+  if (sub === 'freeze') {
+    const member = message.mentions.members.first();
+    if (!member) return message.reply('Mention a user.');
+
+    await member.timeout(28 * 24 * 60 * 60 * 1000, 'Frozen by King').catch(() => {});
+    return message.reply(`👑 ${member.user.tag} frozen.`);
+  }
+
+  if (sub === 'unfreeze') {
+    const member = message.mentions.members.first();
+    if (!member) return message.reply('Mention a user.');
+
+    await member.timeout(null).catch(() => {});
+    return message.reply(`👑 ${member.user.tag} unfrozen.`);
+  }
+}
+
 
   // Community rank/leaderboard/invites
   if (cmd === 'rank') {
